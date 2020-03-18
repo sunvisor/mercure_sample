@@ -1,0 +1,12 @@
+/*
+ *  This file can be used to set variables and supply global styling.  View specific 
+ *  styling should be located the view's corresponding scss file.
+ */
+$enable-font-awesome: dynamic(true);
+
+/**
+ * Symfony の profiler で空白のブロックができるのを回避する
+ */
+.sf-display-none {
+  height: 0;
+}
