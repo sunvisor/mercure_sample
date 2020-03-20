@@ -24,16 +24,22 @@ class RequestNotification
      * @var string
      */
     private $messageId;
+    /**
+     * @var string
+     */
+    private $topic;
 
     /**
      * RequestNotification constructor.
      * @param int    $type
+     * @param string $url
      */
-    public function __construct(int $type)
+    public function __construct(int $type, string $url)
     {
         $this->type = $type;
         // メッセージID を生成
         $this->messageId = uniqid();
+        $this->topic = $url . $this->messageId;
     }
 
     /**
@@ -50,5 +56,13 @@ class RequestNotification
     public function getType()
     {
         return $this->type;
+    }
+
+    /**
+     * @return string
+     */
+    public function getTopic()
+    {
+        return $this->topic;
     }
 }

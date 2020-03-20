@@ -10,11 +10,6 @@ Ext.define('App.view.main.MainModel', {
         'Ext.data.proxy.Memory'
     ],
 
-    data: {
-        name: 'App',
-        messageId: null
-    },
-
     stores: {
         requests: {
             proxy: 'memory'
@@ -29,31 +24,32 @@ Ext.define('App.view.main.MainModel', {
         // 非同期のレクエストにPOSTする
         // レスポンスはすぐに返る
         Ext.Ajax.request({
-            url: '/request',
+            url   : '/request',
             params: {'type': 1}
         }).then(result => {
             const data = Ext.decode(result.responseText);
-            this.set('messageId', data.messageId);
             // EventSource を作ってサーバーからの通知を subscribe する
-            this.subscribe(data.messageId);
+            this.subscribe(data.topic);
             // リクエストした結果をグリッドに表示する
             store.add({
                 messageId: data.messageId,
-                state: 'requested'
+                state    : 'requested'
             })
         }).catch(result => console.error('error', result));
     },
 
-    subscribe(id) {
-        const url = new URL(`${this.marcureUrl}?topic=${id}`),
-              eventSource = new EventSource(url),
-              store = this.get('requests');
+    subscribe(topic) {
+        const url = new URL(this.marcureUrl);
+        url.searchParams.append('topic', topic);
+
+        const eventSource = new EventSource(url.toString()),
+              store       = this.get('requests');
 
         eventSource.onmessage = e => {
             // サーバーから通知があったときの処理
-            const data = Ext.decode(e.data),
+            const data      = Ext.decode(e.data),
                   messageId = data.messageId,
-                  record = store.findRecord('messageId', messageId);
+                  record    = store.findRecord('messageId', messageId);
 
             // ステータスを更新する
             record.set('state', data.state);

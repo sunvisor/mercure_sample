@@ -60,15 +60,6 @@ cd /path/to/thisProject/server
 docker-compose up
 ```
 
-### mercure の起動
-
-- 次のように起動 (Macの場合)
-
-```bash
-cd /path/to/mercure
-./mercure --jwt-key='!ChangeMe!' --addr=':3000' --debug --allow-anonymous --cors-allowed-origins='*' --publish-allowed-origins='http://localhost:3000'
-```
-
 ### Messenger の起動
 
 ```bash

@@ -23,27 +23,28 @@ class AsyncController extends AbstractController
     public function requestAction(Request $request, MessageBusInterface $bus)
     {
         $type = $request->request->get('type');
+        $url = "{$request->getSchemeAndHttpHost()}/read/";
         // 通知オブジェクトを作成
-        $notification = new RequestNotification($type);
+        $notification = new RequestNotification($type, $url);
         // bus に処理を依頼
         $bus->dispatch($notification);
         // メッセージID を返す
         return new JsonResponse([
             'messageId' => $notification->getMessageId(),
-            'success' => true
+            'topic'     => $notification->getTopic(),
+            'success'   => true
         ]);
     }
 
     /**
      * 処理の状態を確認
      *
-     * @Route("/read", name="async_read")
-     * @param Request $request
+     * @Route("/read/{id}", name="async_read")
+     * @param $id
      * @return JsonResponse
      */
-    public function readAction(Request $request)
+    public function readAction($id)
     {
-        $id = $request->request->get('messageId');
         $fileName = __DIR__ . "/../../var/result{$id}.txt";
         if (!file_exists($fileName)) {
             throw $this->createNotFoundException('cannot found data');

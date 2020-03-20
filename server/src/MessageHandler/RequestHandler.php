@@ -46,15 +46,16 @@ class RequestHandler implements MessageHandlerInterface
             'state' => 'in_progress'
         ];
         $id = $message->getMessageId();
+        $topic = $message->getTopic();
         // 作業中のステータスでファイルを書く
         $this->writeContents($id, $data);
         // 処理に時間家がかるのを演出
-        sleep(10);
+        sleep(3);
         // ステータスを完了に変更
         $data['state'] = 'done';
         $this->writeContents($id, $data);
         // push 通知を送る
-        ($this->publisher)(new Update($id, json_encode($data)));
+        ($this->publisher)(new Update($topic, json_encode($data)));
     }
 
     /**
