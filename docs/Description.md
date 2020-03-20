@@ -214,6 +214,8 @@ framework:
 - これで、`RequestNotification` メッセージは RabbitMQ で実行されることになります
 - 他の通知がある場合には、`routing` にて、通知クラスとトランスポートをバインドします
 
+### `messenger:consume` コマンドを実行
+
 バックグラウンドで動作をさせるためには、`messenger:consume` コマンドを実行する必要があります。バックグラウンド動作ですので別プロセスの実行が必要ですよね。
 
 ```bash
@@ -224,6 +226,8 @@ symfony console messenger:consume -vv
 
 ここまでやって API を呼び出してみると、レスポンスがすぐに返ってくるようになります。
 サーバー上で *var* ディレクトリを見るとファイルが作成されています。呼び出されたすぐには `"state": "in_progress"` だったものが、10秒経ったら、`"state": "done"` に変わります
+
+#### 本番環境では
 
 本番環境では、普通にコマンドを実行すると、なんらかの理由でおちてしまったり、メモリーリークが発生したりして困ってしまうことがあります。ですから [Supervisor](http://supervisord.org/) を使って、障害時の再起動や定期的な再起動を設定するなどします。[公式ガイド](https://symfony.com/doc/current/messenger.html#supervisor-configuration) に解説がありますので参考にしてください。
 
@@ -253,10 +257,6 @@ symfony console messenger:consume -vv
         return new JsonResponse($result);
     }
 ```
-
-### 本番環境では
-
-コンシューマーは、 Supervisor などで起動する。
 
 ## Step2: Mercure コンポーネントによるサーバーからの通知
 
