@@ -1,57 +1,53 @@
-# Symfony でバッググラウンドジョブを実行する
+# Running a background job with Symfony
 
-- 実現したいこと
-- Step1: Messenger コンポーネントによるバックグラウンド実行
-- Step2: Mercure コンポーネントによるサーバーからの通知
-- 参考URL
+- What we want to achieve.
+- Step 1: Background execution with the Messenger component
+- Step 2: Notification from the server by the Mercure component
+- Reference URL
 
-## 実現したいこと
+## What we want to achieve
 
-サーバーで重い作業が必要になることがあります。 数分の処理でもタイムアウトを引き起こすことがあります。 Ajax の場合、リクエストの際に設定したタイムアウトの時間内に終わらないかもしれません。 ダウンロード系の場合ではブラウザーのタイムアウト設定に依存します。 そもそもユーザーに対して何のレスポンスもない状態が続くのは精神的にもよくありません。
+You may need to do some heavy work on the server. Even a few minutes of processing can cause a timeout. In Ajax, it may not be finished within the timeout set at the time of the request. If it is a downloader, it depends on your browser's timeout setting. To begin with, it's not good for mental health if you don't get any response from users.
 
-それを何とかするためには、サーバー側で重い作業をする時にバックグラウンドで処理させたいと考えると思います。
-次のような流れです。
+In order to do something about it, you'd think that you'd want to let the server side do the heavy lifting in the background.
+It goes like this.
 
-- リクエストが来る
-- ジョブを登録
-- すぐレスポンスを返す
-- その後ジョブがバックグラウンドで実行される
+- A request comes in.
+- Register a job
+- I'll get right back to you.
+- Then the job runs in the background.
 
-いわゆる「非同期処理」というものですね。これを実現する方法はいろいろありますが、簡単なのは1分単位などで CRON を使ってバックグラウンドタスクを実行させるというものです。Symfony なら Command を作って、その実行を CRON に委ねます。これの欠点は、リクエストが来てから、次の CRON 実行時刻までの待ちが必ず発生するという点です。バックグラウンドに回した処理の中には短い時間で完了するものもあるような場合、処理時間が無駄に伸びてしまうことが発生します。Symfony4 から導入された Messenger コンポーネントを使うとスマートに解決できます。キューを使って処理をバックグラウンドに回して、レスポンスをすぐに返せるようになります。
+This is the so-called "asynchronous processing", isn't it? There are many ways to do this, but one of the easiest is to use CRON to execute a background task every minute or so, in symfony, you can create a Command and let CRON execute it. The disadvantage of this is that there is always a wait from the arrival of the request until the next CRON execution time.
+If some of the processing in the background takes a short time to complete, the processing time may be unnecessarily long.
+The Messenger component, introduced from Symfony4, is a smart solution. You can use a cue to turn the process into the background and get a response right away.
 
-非同期処理によってバックグラウンドでのジョブの実行ができるようになったら、今度は、それが終わったら通知が欲しくなります。長い処理なら、その進捗を知りたくなるかもしれません。これまでのやり方ですと、バックグラウンドジョブの状態を調べる API を用意して、それをクライアントからポーリングで確認する、という方法が考えられますね。
-でもスマートにキメるなら、サーバー側からクライアントに通知を出したいものです。
-[**SSE (Server Sent Event)**](https://developer.mozilla.org/ja/docs/Web/API/Server-sent_events/Using_server-sent_events) を使えば、サーバー側からクライアントへ通知を送ることができるようになります。
-Symfony では Mercure コンポーネントが、それを実現します。
+Once the asynchronous processing allows you to run the job in the background, you now want to be notified when it's done. If it's a long process, you might want to know how it's progressing. One way to do this is to provide an API to check the status of the background job, and then poll the client to see if it's working.
+But if you want to be smart, you want to send notifications to your clients from the server side. 
+[**SSE (Server Sent Event)**](https://developer.mozilla.org/ja/docs/Web/API/Server-sent_events/Using_server-sent_events) allows you to send notifications from the server side to the client. In Symfony, the Mercure component does just that.
 
-ということで、この2つのコンポーネントを使って、バックグラウンド機能を実装してみましょう。
+So, let's use these two components to implement the background functionality.
 
-以下の記事は macOS での作業ログです。他の OS の場合は適宜ご自分の環境に読み替えてください。
+The following article is a work log on macOS. If you are using another OS, please change the reading to your own environment.
 
-## Step1: Messenger コンポーネントによるバックグラウンド実行
+## Step1: Background execution by the Messenger component
 
-[Messenger コンポーネント](https://symfony.com/doc/current/components/messenger.html) は、バスを通じて、アプリケーションからバッググラウンドジョブ (Handler) に処理を依頼する仕組みです。
-アプリケーションは、バスにメッセージを送ります。仕事の依頼ですね。
-標準では、送られたメッセージはその場で処理されます。この場合は非同期ではなく同期です。
-[トランスポート](https://symfony.com/doc/current/messenger.html#messenger-transports-config)
-を設定すると、キューはそのトランスポートに送られて、非同期処理が実現できるようになります。
+[The Messenger component](https://symfony.com/doc/current/components/messenger.html) is a mechanism for requesting a bag ground job (Handler) to be processed by an application through a bus. The application sends a message to the bus. It's a job offer. By default, messages sent are processed on the fly. In this case, it is synchronous, not asynchronous. If you set a [transport](https://symfony.com/doc/current/messenger.html#messenger-transports-config), the queue will be sent to that transport to allow asynchronous processing.
 
+### Messenger Bundle
 
-### Messenger バンドル
-
-Symfony に Messenger バンドルをインストールします。
+Install the Messenger Bundle to Symfony.
 
 ```bash
 symfony composer require messenger
 ```
 
-### コントローラーのメソッド
+### Controller Method
 
-まずは、時間がかかりそうな処理を受け付ける API のコントローラーメソッドを作ります。ここでは `request` というエンドポイントとしています。
+First, let's create a controller method for the API that accepts likely time-consuming operations. In this case, the endpoint is `request`.
 
 ```php
     /**
-     * 非同期のリクエスト
+     * Async Request
      *
      * @Route("/request", name="async_request")
      * @param Request             $request
@@ -61,11 +57,11 @@ symfony composer require messenger
     public function requestAction(Request $request, MessageBusInterface $bus)
     {
         $type = $request->request->get('type');
-        // 通知オブジェクトを作成
+        // create notification object
         $notification = new RequestNotification($type);
-        // bus に処理を依頼
+        // Ask bus to handle it
         $bus->dispatch($notification);
-        // メッセージID を返す
+        // return message id
         return new JsonResponse([
             'messageId' => $notification->getMessageId(),
             'success' => true
@@ -73,16 +69,16 @@ symfony composer require messenger
     }
 ```
 
-- `MessageBusInterface` を注入しています
-- リクエストの POST パラメーターから値を取り出して、それをセットした通知オブジェクト (後述) を作成します
-- それを `MessageBus` の `dispatch` メソッドに渡します
-    - これでメッセージがバスに送られます
-- メッセージを送ったらそのままレスポンスを返します
-    - メッセージをクライアントがメッセージを特定できるように `messageId` を返しています
+- It injects `MessageBusInterface`.
+- Creates a notification object (see below) that takes the value from the POST parameter of the request and sets it
+- Pass it to the `dispatch` method of `MessageBus`.
+    - The message will now be sent to the bus.
+- Send a message and we'll get back to you.
+    - Returns `messageId` so that the client can identify the message.
 
-### メッセージオブジェクト
+### Message object
 
-コントローラーでインスタンスを生成しているメッセージオブジェクトのクラスは次のようなものです。メッセージはロジックを持たないデータオブジェクトクラスです。メッセージのオブジェクトにはこれといった決まりはありませんが、シリアライズされてキューに保存されるので、シリアライズできるシンプルなデータだけをもたせることになります。
+The class of the message object being instantiated by the controller looks something like this The message is a data object class with no logic. There is no such thing as a message object, but since it is serialized and stored in a queue, it should have only simple data that can be serialized.
   
 ```php
 class RequestNotification
@@ -103,7 +99,7 @@ class RequestNotification
     public function __construct(int $type)
     {
         $this->type = $type;
-        // メッセージID を生成
+        // create message id
         $this->messageId = uniqid();
     }
 
@@ -125,12 +121,12 @@ class RequestNotification
 }
 ```
 
-- コンストラクターの中で `messageId` を生成しています
-- これがメッセージを特定する ID になります
+- Creates a `messageId` in the constructor.
+- This will be the ID that identifies the message
 
-### メッセージハンドラー
+### Message Handler
 
-`dispatch` されたメッセージを読み解いて、処理を実行するのがメッセージハンドラーの役目です。
+The role of the message handler is to read the `dispatch`ed message and execute it.
 
 ```php
 class RequestHandler implements MessageHandlerInterface
@@ -143,11 +139,11 @@ class RequestHandler implements MessageHandlerInterface
             'state' => 'in_progress'
         ];
         $id = $message->getMessageId();
-        // 作業中のステータスでファイルを書く
+        // Write a file with 'in_progress' status
         $this->writeContents($id, $data);
-        // 処理に時間家がかるのを演出
+        // Making it slow to process
         sleep(10);
-        // ステータスを完了に変更
+        // Change status to 'done'
         $data['state'] = 'done';
         $this->writeContents($id, $data);
     }
@@ -165,21 +161,21 @@ class RequestHandler implements MessageHandlerInterface
 }
 ```
 
-- `MessageHandlerInterface` インターフェイスを実装します
-    - このインターフェイスには何も定義されていないんですが、Symfony の DI がこれを見てメッセージハンドラーだとわかるんですね
-- `__invoke` メソッドに実際の処理を書きます
-    - 引数にメッセージが渡されます
-    - 引数のタイプヒントによって、このハンドラーが `RequestNotification` メッセージと関連するハンドラーだと判断さ  れます
-    - 簡単な処理として、ファイルに何かを書き込むというジョブを実行しています
-- 最初の API を呼び出し、`dispatch` されると、このハンドラーが実行されて、ファイルが書き出されます
-- 途中で `sleep` を挟んで、時間がかかる処理を演出しています
+- Implement the `MessageHandlerInterface` interface.
+    - Nothing is defined for this interface, but the Symfony DI can tell that it is a message handler by looking at it
+- Write the actual operation to the `__invoke` method.
+    - A message is passed to the argument
+    - The type hint in the argument determines that this handler is the one associated with the `RequestNotification` message.
+    - As a simple process, we are running a job of writing something to a file
+- When the first API is called and `dispatch`, this handler will be executed and the file will be written out
+- To make the process more time-consuming, we put a `sleep` in the middle.
 
-### RabbitMQ の導入
+### Introducing RabbitMQ
 
-現在の段階では、トランスポートが設定されていないので同期で処理されます。つまりレスポンスが返るまで10秒待たされます。重いジョブを依頼すると、レスポンスまでの時間はジョブが終了までかかります。
-目的の非同期を実現させるためにはトランスポートを指定しなければなりません。今回はトランスポートとして [RabbitMQ](https://www.rabbitmq.com/) を使うことにします。
+At this stage, the transport is not set up, so it will be handled in sync. This means you will have to wait 10 seconds for a response. If you ask for a heavy job, the time to response will take until the job is finished.
+This time we will use [RabbitMQ](https://www.rabbitmq.com/) as the transport.
 
-開発環境では docker で動かしましょう。
+In the development environment, let's run it with docker.
 
 ```
 version: "3"
@@ -189,16 +185,16 @@ services:
     ports: [5672, 15672]
 ```
 
-上記が *docker-compose.yaml* の内容です。`docker-composer up` して起動します。
+The above is the content of *docker-compose.yaml*. Start with `docker-composer up`.
 
-- **注意**: PHP に ampq extension がインストールされていないと動作しません。また ampq extension を入れるには、ローカルに RabbitMQ が入っていないといけません。 phpbrew で拡張を入れる場合は次のようにします。
+- **Note**: It will not work if the ampq extension is not installed in PHP. Also, to include the ampq extension, you need to have a local RabbitMQ. To insert an extension in phpbrew, do the following
 
 ```bash
 brew install rabbitmq-c
 phpbrew ext install amqp
 ```
 
-*config/packages* にある *messenger.yaml* に `transport` と `routing` を定義します
+Define `transport` and `routing` in *messenger.yaml* in *config/packages*.
 
 ```yaml
 framework:
@@ -209,37 +205,37 @@ framework:
             'App\Message\RequestNotification': async
 ```
 
-- `transport` で `async` というトランスポートを RabbitMQ に設定しています
-- `routing` で、`RequestNotification` クラスを `async` にバインドしています
-- これで、`RequestNotification` メッセージは RabbitMQ で実行されることになります
-- 他の通知がある場合には、`routing` にて、通知クラスとトランスポートをバインドします
+- The `transport` sets the `async` transport to RabbitMQ.
+- With `routing`, the `RequestNotification` class is bound to `async`.
+- Now, the `RequestNotification` message is executed in RabbitMQ
+- If there are other notifications, bind the notification class and transport with `routing`.
 
-### `messenger:consume` コマンドを実行
+### Run `messenger:consume` command
 
-バックグラウンドで動作をさせるためには、`messenger:consume` コマンドを実行する必要があります。バックグラウンド動作ですので別プロセスの実行が必要ですよね。
+You must execute the `messenger:consume` command in order to run in the background. It's a background operation, so you need to run a different process.
 
 ```bash
 symfony console messenger:consume -vv
 ```
 
-- `-vv` はログを細かく表示させるためのオプションです
+- `-vv` is an option to show the log in detail.
 
-ここまでやって API を呼び出してみると、レスポンスがすぐに返ってくるようになります。
-サーバー上で *var* ディレクトリを見るとファイルが作成されています。呼び出されたすぐには `"state": "in_progress"` だったものが、10秒経ったら、`"state": "done"` に変わります
+If you call the API now, you should get a response right away.
+If you look at the *var* directory on the server, you'll see a file has been created. After 10 seconds, it changes from `"state": "in_progress"` immediately after the call to `"state": "done"`.
 
-#### 本番環境では
+#### Production environment
 
-本番環境では、普通にコマンドを実行すると、なんらかの理由でおちてしまったり、メモリーリークが発生したりして困ってしまうことがあります。ですから [Supervisor](http://supervisord.org/) を使って、障害時の再起動や定期的な再起動を設定するなどします。[公式ガイド](https://symfony.com/doc/current/messenger.html#supervisor-configuration) に解説がありますので参考にしてください。
+In the production environment, if you execute a command normally, it may die or cause a memory leak for some reason.  So we use [Supervisor](http://supervisord.org/) to set up reboots on failure, regular reboots, etc.  Please refer to the [official guide](https://symfony.com/doc/current/messenger.html#supervisor-configuration) for more information. 
 
-### 状態を取得する API の実装
+### Implementing the API to get the state
 
-バックグラウンドでジョブが実行できるのはいいのですが、ジョブが終わったのかどうなのか知る方法がないといけません。
-次のような API を書いて、内容を確認できるようにしましょう。
-この API をコールすることで、ジョブの状態を知ることができます。必要であれば、進捗状況も返すようにすれば、クライアント側でプログレスバーなどを表示することもできますね。
+It's nice to be able to run a job in the background, but there has to be a way to know if the job is done or not.
+Let's write an API like this so that we can check the content
+You can call this API to find out the status of a job. If necessary, you can display a progress bar on the client side if you want to return the progress status as well.
 
 ```php
     /**
-     * 処理の状態を確認
+     * Get job status
      *
      * @Route("/read/{id}", name="async_read")
      * @param $id
@@ -251,33 +247,33 @@ symfony console messenger:consume -vv
         if (!file_exists($fileName)) {
             throw $this->createNotFoundException('cannot found data');
         }
-        // 非同期でつくられるファイルの内容を取得して返す
+        // get and return the contents of the file created asynchronously
         $content = file_get_contents($fileName);
         $result = json_decode($content);
         return new JsonResponse($result);
     }
 ```
 
-## Step2: Mercure コンポーネントによるサーバーからの通知
+## Step2: Notification from the server by the Mercure component
 
-Messenger コンポーネントのおかげで非同期処理を実現することができました。ここまでのことが実装できたら、ポーリングを使えば状況確認もできます。十分実用的です。
-次に、SSE を使ってサーバー側からの通知を実現しましょう。[Mercure コンポーネント](https://symfony.com/doc/current/components/mercure.html) を使います。
+Thanks to the Messenger component, we were able to achieve asynchronous processing. Once you've implemented this much, you can also use polling to see what's going on. It is practical enough. Next, let's use SSE to enable server-side notifications, using the [Mercure component](https://symfony.com/doc/current/components/mercure.html).
 
-[Mercure](https://mercure.rocks/) の**ハブ**を起動しておいて、アプリケーションからそのハブに POST することで、クライアントに SSE を送信します。
-クライアント側では [`EventSource`](https://developer.mozilla.org/ja/docs/Web/API/Server-sent_events/Using_server-sent_events) を使ってサーバーイベントをリスニングします。
+Start a [Mercure](https://mercure.rocks/) hub and send the SSE to the client by POSTing from the application to that hub.
+On the client side, the server event is listened to using [`EventSource`](https://developer.mozilla.org/ja/docs/Web/API/Server-sent_events/Using_server-sent_events).
 
-### Mercure コンポーネントのインストール
 
-Symfony の Mercure コンポーネントをインストールします。
+### Installing Mercure Components
+
+Install the Symfony Mercure component.
 
 ```bash
 composer require mercure
 ```
 
-### Mercure のセットアップ
+### Setup Mercure
 
-Mercure 公式の Docker イメージがありますので、それを起動するようにします。
-*docker-compose.yaml* に marcure の定義を追加します。
+There's an official Mercure Docker image, so you can launch it.
+Add a definition of marcure to *docker-compose.yaml*.
 
 ```yaml
 version: "3"
@@ -288,7 +284,7 @@ services:
   mercure:
     image: dunglas/mercure
     environment:
-      # ここはあなたが決めたキーにします
+      # This will be the key you decide.
       - JWT_KEY=sunvisor
       - DEMO=1
       - ALLOW_ANONYMOUS=1
@@ -305,23 +301,23 @@ networks:
     driver: bridge
 ```
 
-#### JWT_TOKEN を取得して環境変数にセット
+#### Get JWT_TOKEN and set it to the environment variable
 
-[Mercure の公式ガイド](https://symfony.com/doc/current/mercure.html) にある、[サンプル JWT のリンク](https://jwt.io/#debugger-io?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtZXJjdXJlIjp7InB1Ymxpc2giOlsiKiJdfX0.iHLdpAEjX4BqCsHJEegxRmO-Y6sMxXwNATrQyRNt3GY) を開いて、*"your-256-bit-secret"* となっている欄に、上記の *docker-compose.yaml* で `JWT_KEY` の項目に設定したキーを入力します。
-すると、"Encoded" の欄が更新されますので、それが `JWT_TOKEN` となります。
+Open the [sample JWT link](https://jwt.io/#debugger-io?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtZXJjdXJlIjp7InB1Ymxpc2giOlsiKiJdfX0.iHLdpAEjX4BqCsHJEegxRmO-Y6sMxXwNATrQyRNt3GY) in [Mercure's official guide](https://symfony.com/doc/current/mercure.html) and enter the key you set in `JWT_KEY` in *docker-compose.yaml* above in the field marked *"your-256-bit-secret"*. 
+Then, the "Encoded" column is updated, and it becomes `JWT_TOKEN`.
 
-*.env.local* に次の環境変数を定義します。
+Define the following environment variables in *.env.local*
 
 ```
 MERCURE_PUBLISH_URL=http://localhost:3000/.well-known/mercure
-MERCURE_JWT_TOKEN='上記で生成したJWT_TOKEN'
+MERCURE_JWT_TOKEN='JWT_TOKEN generated by the above'
 ```
 
-`docker-compose` を再起動すると、Mercure のハブが起動します。
+If you restart `docker-compose`, the Mercure hub will be started.
 
-### 通知の送信
+### Sending Notifications
 
-通知を送ることを publish といいます。公式ガイドのサンプルコードを次に示します。
+Sending a notification is called a `publish`. Here is the sample code from the official guide
 
 ```php
     public function __invoke(PublisherInterface $publisher): Response
@@ -338,19 +334,20 @@ MERCURE_JWT_TOKEN='上記で生成したJWT_TOKEN'
     }
 ```
 
+- It injects the `PublisherInterface`.
+- The injected `publisher` is used to send update notifications.
+    - The argument passes an instance of the class `SymfonyComponent\frz}MercureUpdate}.
+    - The first argument of `Update` is *topic*.
+    - This *topic* must be an IRI (Internationalized Resource Identifier, RFC 3987).
+    - A unique identifier for the resource to be dispatched
 - `PublisherInterface` を注入しています
-- 注入された `publisher` を使って、更新通知を送ります。
-    - 引数には `Symfony\Component\Mercure\Update` クラスのインスタンスを渡します
-    - `Update` の1つ目の引数は *topic* です。
-    - この *topic* は、IRI (Internationalized Resource Identifier、RFC 3987) である必要があります。
-    - ディスパッチされるリソースの一意の識別子です
 
+#### The `RequestNotification` class has been changed.
 
-#### `RequestNotification` クラスの変更
+To make *topic* an IRI, pass a URL to the message. To do so, the class `RequestNotification` is slightly modified.
 
-*topic* を IRI にするために、メッセージに URL を渡すようにします。そのために `RequestNotification` クラスを少し変更します。
+In fact, *topic* works normally even if it is not IRI. However, I'm going to follow the rule that this must be an IRI. We want to send a useful URL, so we'll make it pass the URL of the `read` API.
 
-実は、*topic* は、IRI でなくても普通に動作します。が、ここは IRI にしなければならない、というルールを守って行こうと思います。どうせなら、役に立つ URL を送りたいので、`read` API の URL を渡すように作ることにします。
 
 ```php
 class RequestNotification
@@ -376,7 +373,7 @@ class RequestNotification
     public function __construct(int $type, string $url)
     {
         $this->type = $type;
-        // メッセージID を生成
+        // create message id
         $this->messageId = uniqid();
         $this->topic = $url . $this->messageId;
     }
@@ -407,15 +404,15 @@ class RequestNotification
 }
 ```
 
-- コンストラクタに URL を渡すと、それと `messageId` を元に topic を作ります。
+- If a URL is passed to the constructor, a topic is created based on the URL and `messageId`.
 
-#### `requestAction` コントローラーメソッドの変更
+#### Modify `requestAction` controller method
 
-`RequestNotification` クラスが URL を受け取るようになったので、`requestAction` コントローラーメソッドを変更します。
+Modify the `requestAction` controller method, as the `RequestNotification` class now accepts URLs.
 
 ```php
     /**
-     * 非同期のリクエスト
+     * Async Request
      *
      * @Route("/request", name="async_request")
      * @param Request             $request
@@ -426,11 +423,11 @@ class RequestNotification
     {
         $type = $request->request->get('type');
         $url = "{$request->getSchemeAndHttpHost()}/read/";
-        // 通知オブジェクトを作成
+        // create notification object
         $notification = new RequestNotification($type, $url);
-        // bus に処理を依頼
+        // Ask bus to handle it
         $bus->dispatch($notification);
-        // メッセージID を返す
+        // return message id
         return new JsonResponse([
             'messageId' => $notification->getMessageId(),
             'topic'     => $notification->getTopic(),
@@ -439,14 +436,14 @@ class RequestNotification
     }
 ```
 
- - RequestNotification` に URL を渡すようにします
-   - 先程の方針で `RequestNotification` の `url` には、`read` リクエストの URL を渡しています
- - レスポンスに `topic` を返すようにします
-   - クライアント側では、この `topic` を使って通知を購読します
+ - Pass the URL to the `RequestNotification`.
+   - In accordance with the previous policy, the `url` of the `RequestNotification` is the URL of the `read` request.
+ - The response should be returned as `topic`.
+   - The client uses this `topic` to subscribe to notifications.
  
-#### *RequestHandler* クラスを修正します。
+#### Modify the *RequestHandler* class.
 
-`RequestHandler` クラスで、クライアントへの通知を送信するように修正します。
+Modify the `RequestHandler` class to send a notification to the client.
 
 ```php
 class RequestHandler implements MessageHandlerInterface
@@ -462,7 +459,7 @@ class RequestHandler implements MessageHandlerInterface
      */
     public function __construct(PublisherInterface $publisher)
     {
-        // push 通知を行う publisher を注入
+        // inject publisher for push notification
         $this->publisher = $publisher;
     }
 
@@ -475,14 +472,14 @@ class RequestHandler implements MessageHandlerInterface
         ];
         $id = $message->getMessageId();
         $topic = $message->getTopic();
-        // 作業中のステータスでファイルを書く
+        // Write a file with 'in_progress' status
         $this->writeContents($id, $data);
-        // 処理に時間家がかるのを演出
+        // Making it slow to process
         sleep(10);
-        // ステータスを完了に変更
+        // Change status to 'done'
         $data['state'] = 'done';
         $this->writeContents($id, $data);
-        // push 通知を送る
+        // send push notification
         ($this->publisher)(new Update($topic, json_encode($data)));
     }
 
@@ -499,21 +496,21 @@ class RequestHandler implements MessageHandlerInterface
 }
 ```
 
-- コンストラクタで `PublisherInterface` を注入しています
-- 注入されたこの `publisher` を使って、更新通知を送ります
-    - `Update` の1つ目の引数は *topic* ですので、`RequestNotification` から topic を取り出してセットします
-    - 2つ目の引数は、クライアントに送るデータをセットします
+- Injecting the `PublisherInterface` in the constructor.
+- This injected `publisher` is used to send update notifications.
+    - The first argument to `Update` is *topic*, so take the topic from `RequestNotification` and set it
+    - The second argument is a set of data to send to the client
 
-### 通知を受け取る (クライアント側のJavaScript)
+### Receiving notifications (client-side JavaScript)
 
-サーバーから SSE を使って送られた通知を受け取るには [`EventSource`](https://developer.mozilla.org/ja/docs/Web/API/Server-sent_events/Using_server-sent_events) を使います。
-Mdn のページの Browser compatibility を見ておわかりのように、お約束ですが IE と古い Edge では動作しません。ですが [polyfill](https://github.com/Yaffle/EventSource) がありますので心配いりません。
+You can use [`EventSource`](https://developer.mozilla.org/ja/docs/Web/API/Server-sent_events/Using_server-sent_events) to receive notifications sent by the server using SSE.
+As you can see from the Browser compatibility on Mdn's page, as promised, it doesn't work in IE and older Edge. But don't worry, there is a [polyfill](https://github.com/Yaffle/EventSource).
 
-クライアント側のプログラムは、[Sencha Ext JS](https://www.sencha.com/products/extjs/) で記述しました。
+The client side program is written by Sencha [Sencha Ext JS](https://www.sencha.com/products/extjs/).
 
 #### *Main.js*
 
-ビューのクラスです。
+The class of view.
 
 ```javascript
 Ext.define('App.view.main.Main', {
@@ -569,13 +566,13 @@ Ext.define('App.view.main.Main', {
 });
 ```
 
-- ツールバーに Requesst ボタンを配置
-- 画面中央にはグリッドを配置しています
-    - このグリッドにリクエストの状態を表示します
+- Place the Requesst button on the toolbar
+- A grid is placed in the center of the screen
+    - Display the status of the request in this grid
 
 #### *MainController.js*
 
-ビューのコントローラーです。イベントを処理します。
+This is a ViewController. This will handle the event.
 
 ```javascript
 Ext.define('App.view.main.MainController', {
@@ -596,14 +593,14 @@ Ext.define('App.view.main.MainController', {
 });
 ```
 
-- `onRequestButton` は Request ボタンがクリックされたときの処理です
-    - ViewModel の `sendRequest` メソッド (後述) を呼び出しています
-- `renderStatus` は、ステータスカラムを描画する処理です
-    - state が 'done' の場合は、ロード中を示すアイコンを表示させています
+- `onRequestButton` is the process when the Request button is clicked.
+    - Calling the ViewModel's `sendRequest` method (see below).
+- `renderStatus` is the process to draw a status column.
+    - If the state is 'done', an icon is displayed to indicate that it is loading.
 
 #### *MainModel.js*
 
-ビューモデルです。サーバーとの通信とデータの保持を担当します。
+This is a ViewModel. This class is responsible for communication and data retention with the server.
 
 ```javascript
 Ext.define('App.view.main.MainModel', {
@@ -626,16 +623,16 @@ Ext.define('App.view.main.MainModel', {
     sendRequest() {
         const store = this.getStore('requests');
 
-        // 非同期のレクエストにPOSTする
-        // レスポンスはすぐに返る
+        // POSTing to asynchronous requests
+        // I'll get back to you soon with a response.
         Ext.Ajax.request({
             url   : '/request',
             params: {'type': 1}
         }).then(result => {
             const data = Ext.decode(result.responseText);
-            // EventSource を作ってサーバーからの通知を subscribe する
+            // Create an EventSource to subscribe notifications from the server
             this.subscribe(data.topic);
-            // リクエストした結果をグリッドに表示する
+            // display the result on the grid
             store.add({
                 messageId: data.messageId,
                 state    : 'requested'
@@ -651,12 +648,12 @@ Ext.define('App.view.main.MainModel', {
               store       = this.get('requests');
 
         eventSource.onmessage = e => {
-            // サーバーから通知があったときの処理
+            // when the server sends a notification
             const data      = Ext.decode(e.data),
                   messageId = data.messageId,
                   record    = store.findRecord('messageId', messageId);
 
-            // ステータスを更新する
+            // update state
             record.set('state', data.state);
             eventSource.close();
         }
@@ -664,33 +661,36 @@ Ext.define('App.view.main.MainModel', {
 });
 ```
 
-- `sendRequest` メソッドでは、API を呼び出しています。
-- レスポンスを受け取ったら (`then` の中の処理)
-    - `subscribe` メソッドを呼び出してから
-    - リクエストの内容をグリッドに追加 (正しくはグリッドと紐付けられた `store` に追加) しています
-- `subscribe` メソッドでは、渡された topic の url に対して、通知の待受をします
-    - EventSource のインスタンスを作成し
-    - `onmessage` に、通知があった時に実行する処理を記述しています
-- `onmessage` では、
-    - `messageId` に対応するレコードを取得して、`state` を変更しています
-    - その後、`close` メソッドを呼び出してイベントの購読を終えています
+- The `sendRequest` method calls the API.
+- If a response is received (processing in `then`)
+    - Call the `subscribe` method
+    - Adds the content of the request to the grid (or, more correctly, to the grid-tied `store`).
+- The `subscribe` method allows you to listen for notifications for the URL of the topic passed to you.
+    - Create an instance of EventSource
+    - The `onmessage` file describes the process to be executed when a notification is received.
+- In the `onmessage`,
+    - Fetching a record corresponding to `messageId` and modifying `state`.
+    - It then calls the `close` method to terminate the event subscription
     
-### 実行画面
+### Execution screen
 
-実行した画面のキャプチャです。
+This is a capture of the screen that was executed.
 
 ![](mercure.gif)
 
-GIF アニメの長さを抑えるために、 `RequestHandler` での待ち時間を短めにして実行しています。非同期処理によって、適切にハンドリングできているのがわかると思います。
+In order to reduce the length of GIF animations, the waiting time for `RequestHandler` is shortened and executed. You can see that it is handled properly by asynchronous processing.
 
-## まとめ
+## Summary.
 
-Symfony の Messenger コンポーネントと、Mercure コンポーネントを使って、非同期処理と完了の通知を実現できました。開発対象の要件によって、この両方が必要な場合もあるでしょうし、通知はいらないけど非同期処理はほしいよね、という場合もあるでしょう。でも、これでどちらの場合にも対応できるようになりました。
+With the Symfony Messenger component and the Mercure component, we were able to achieve asynchronous processing and completion notification. Depending on your development requirements, you may need both of them, or you may not need notification but want asynchronous processing. But now I can deal with both cases.
 
-Messenger コンポーネントの方は、トランスポートを設定しなければ同期で動きます。
-トランスポートを用意しなくても、標準で同期で実行されるということは、この先、非同期にする必要があるかもしれないタスクは、最初からメッセージを通じて処理するようにしておけば、必要に応じてトランスポートの定義をするだけで非同期に変更することができるということになります。少々のオーバーヘッドはあるかもしれませんが、拡張性としてはいい感じがします。また、プログラムの構造の飢えでもリクエストの受付と、リクエストの実行を分離するということが自然とできて良いかもしれません。
+If no transport is provided, it will be run synchronously.
+So any tasks that may need to be made asynchronous should be handled through messages.
+That way, when you need asynchronous, you just define the transport.
+It may have a bit of overhead, but it's scalable. Also, from a program structure point of view, it might be nice to naturally separate the receipt of a request from the execution of a request.
 
-## 参考URL
+
+## URLs of the reference materials
 
 - [Messenger: Sync & Queued Message Handling](https://symfony.com/doc/current/messenger.html)
 - [The Messenger Component](https://symfony.com/doc/current/components/messenger.html)
@@ -704,3 +704,5 @@ Messenger コンポーネントの方は、トランスポートを設定しな�
 - [Instant realtime notifications with Symfony and Mercure](https://medium.com/@stefan.poeltl/instant-realtime-notifications-with-symfony-and-mercure-e45270f7c8a5)
 - [Pushing Live Updates Using the Mercure Protocol: Api Platform](https://api-platform.com/docs/core/mercure/)
 - [Real-Time Notifications With Mercure](https://thedevopsguide.com/real-time-notifications-with-mercure/)
+
+Translated by DeepL
